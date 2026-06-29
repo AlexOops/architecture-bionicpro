@@ -1,0 +1,111 @@
+@startuml
+
+left to right direction
+
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam linetype polyline
+skinparam defaultTextAlignment center
+skinparam packageStyle rectangle
+skinparam nodesep 80
+skinparam ranksep 90
+skinparam ArrowThickness 1
+skinparam ArrowColor #374151
+
+skinparam rectangle {
+  BackgroundColor #DDF4FF
+  BorderColor #2B7BBB
+  FontColor #1F2937
+}
+
+skinparam database {
+  BackgroundColor #E8F7FF
+  BorderColor #2780E3
+  FontColor #1F2937
+}
+
+skinparam queue {
+  BackgroundColor #FFF2CC
+  BorderColor #D6A100
+  FontColor #1F2937
+}
+
+skinparam note {
+  BackgroundColor #FFF8DC
+  BorderColor #C9A227
+}
+
+actor "Пилот протеза" as user
+
+frame "Клиентский контур" as clientZone {
+  rectangle "Report Frontend\n[React SPA]\n\nКнопка скачивания отчёта" as frontend
+}
+
+frame "Контур доступа" as authZone {
+  rectangle "Keycloak\n[OIDC Provider]\n\nАутентификация\nJWT access token" as keycloak
+}
+
+frame "Backend" as backendZone {
+  rectangle "Report API\n[Python / FastAPI]\n\nGET /reports\nПроверка JWT\nOwnership check" as reportApi
+}
+
+frame "Источники данных" as sourcesZone {
+  database "CRM DB\n[PostgreSQL]\n\nКлиенты\nПротезы" as crmDb
+
+  database "Telemetry DB\n[PostgreSQL]\n\nСобытия работы протезов" as telemetryDb
+}
+
+frame "ETL" as etlZone {
+  rectangle "Apache Airflow\n[DAG]\n\nПо расписанию:\nextract -> transform -> load" as airflow
+}
+
+frame "OLAP / витрина" as olapZone {
+  database "ClickHouse\n[OLAP DB]\n\nreports.user_report_daily\nГотовая витрина отчётов" as clickhouse
+}
+
+user --> frontend : скачать отчёт
+frontend --> keycloak : login
+frontend --> reportApi : GET /reports\nBearer token
+
+reportApi --> keycloak : JWKS\nпроверка подписи JWT
+reportApi --> clickhouse : read report mart
+
+airflow --> crmDb : extract CRM
+airflow --> telemetryDb : extract telemetry
+airflow --> clickhouse : load report mart
+
+note bottom of airflow
+Airflow заранее готовит витрину.
+
+Report API не делает тяжёлые расчёты
+в момент запроса пользователя.
+end note
+
+note bottom of reportApi
+Пользователь не передаёт user_id.
+
+Report API берёт username из JWT
+и отдаёт только его отчёт.
+end note
+
+note bottom of clickhouse
+Витрина сгруппирована по:
+
+- username
+- report_date
+- prosthesis_id
+
+Это ускоряет чтение отчёта
+по конкретному пользователю.
+end note
+
+legend bottom
+|= Элемент |= Назначение |
+| Airflow DAG | Регулярно собирает CRM + telemetry и обновляет витрину. |
+| ClickHouse | OLAP-хранилище готовых отчётов. |
+| Report API | Возвращает отчёт из OLAP без тяжёлых online-вычислений. |
+| JWT check | Проверка подписи access token через JWKS Keycloak. |
+| Ownership check | Отчёт строится только по username из JWT. |
+endlegend
+
+@enduml

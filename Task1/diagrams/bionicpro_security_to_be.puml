@@ -1,0 +1,158 @@
+cat > Task1/diagrams/bionicpro_security_to_be.puml <<'EOF'
+@startuml
+
+left to right direction
+
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam linetype polyline
+skinparam defaultTextAlignment center
+skinparam packageStyle rectangle
+skinparam nodesep 80
+skinparam ranksep 90
+skinparam ArrowThickness 1
+skinparam ArrowColor #374151
+
+skinparam rectangle {
+  BackgroundColor #DDF4FF
+  BorderColor #2B7BBB
+  FontColor #1F2937
+}
+
+skinparam database {
+  BackgroundColor #E8F7FF
+  BorderColor #2780E3
+  FontColor #1F2937
+}
+
+skinparam cloud {
+  BackgroundColor #F3F4F6
+  BorderColor #6B7280
+  FontColor #1F2937
+}
+
+skinparam note {
+  BackgroundColor #FFF8DC
+  BorderColor #C9A227
+}
+
+actor "Пилот протеза" as pilot
+actor "Покупатель" as buyer
+actor "Оператор" as operator
+actor "ML-инженер" as mlEngineer
+
+frame "Клиентские приложения и устройства" as clientZone {
+  rectangle "Android App\n[Mobile App]\n\nДонастройка протеза" as androidApp
+  rectangle "Интернет-магазин\n[Web App]\n\nЗаказ и оплата" as shop
+  rectangle "Report Frontend\n[React SPA]\n\nСкачивание отчётов" as reportFrontend
+  rectangle "Чип протеза\n[ESP32 / C++]\n\nTelemetry via 4G" as chip
+}
+
+frame "Контур аутентификации" as authZone {
+  rectangle "BFF / Token Mediator\n[Backend For Frontend]\n\n- server-side token exchange\n- frontend получает только HttpOnly cookie\n- IdP-токены не попадают в браузер" as bff
+
+  rectangle "Keycloak / IAM Broker\n[Identity Broker]\n\n- SSO\n- IdP brokering\n- RBAC\n- PKCE for SPA\n- internal_user_id" as keycloak
+
+  database "Token Vault\n[Redis/PostgreSQL]\n\nServer-side session\nAccess/refresh tokens" as tokenVault
+
+  database "IAM DB\n[PostgreSQL]\n\nRealm config\nClients / roles\nExternal ID -> internal_user_id" as iamDb
+}
+
+frame "Внешние источники учётных записей" as idpZone {
+  cloud "External IdP RU\n[OIDC / SAML / LDAP]" as idpRu
+  cloud "External IdP EU\n[OIDC / SAML / LDAP]" as idpEu
+  cloud "External IdP Other\n[OIDC / SAML / LDAP]" as idpOther
+}
+
+frame "Бизнес-сервисы BionicPRO" as backendZone {
+  rectangle "CRM\n[Container]\n\nЗаказы, клиенты,\nпроизводство" as crm
+
+  rectangle "API\n[Backend]\n\nНастройка протеза\nПриём telemetry" as api
+
+  rectangle "Report API\n[Backend]\n\nФормирование отчётов\nOwnership check" as reportApi
+}
+
+frame "Данные" as dataZone {
+  database "Main DB\n[PostgreSQL]\n\nOperational / CRM data" as mainDb
+
+  database "ClickHouse\n[Analytics Storage]\n\nTelemetry events\nИсточник отчётов" as clickhouse
+
+  database "Regional Medical DB RU\n[Local Storage]\n\nPersonal / medical data" as medicalRu
+
+  database "Regional Medical DB EU\n[Local Storage]\n\nPersonal / medical data" as medicalEu
+}
+
+pilot --> androidApp
+buyer --> shop
+operator --> crm
+mlEngineer --> api
+
+androidApp --> bff : HTTPS
+shop --> bff : HTTPS
+reportFrontend --> bff : HTTPS
+
+bff --> keycloak : OIDC
+bff --> tokenVault : session / tokens
+
+keycloak --> iamDb
+keycloak --> idpRu
+keycloak --> idpEu
+keycloak --> idpOther
+
+bff --> reportApi : user context
+
+reportApi --> medicalRu
+reportApi --> medicalEu
+reportApi --> clickhouse
+
+shop --> crm
+crm --> mainDb
+
+androidApp --> api
+chip --> api
+api --> mainDb
+api --> clickhouse
+
+note top of bff
+Frontend не хранит access/refresh tokens.
+
+В браузере остаётся только
+HttpOnly Secure SameSite cookie.
+end note
+
+note bottom of keycloak
+Keycloak унифицирует доступ,
+но не хранит medical data.
+
+Учётные записи подключаются
+через локальные External IdP.
+end note
+
+note bottom of reportApi
+Проверка доступа выполняется
+на backend-стороне:
+
+internal_user_id -> prosthesis_id
+end note
+
+note bottom of idpZone
+Для каждой страны можно подключить
+свой IdP / User Directory.
+
+Так не нарушается принцип
+локального хранения учётных данных.
+end note
+
+legend bottom
+|= Элемент |= Назначение |
+| Keycloak / IAM Broker | SSO, IdP brokering, RBAC, internal_user_id. |
+| BFF / Token Mediator | Token exchange на backend. IdP-токены не отдаются во frontend. |
+| Token Vault | Server-side хранение session и access/refresh tokens. |
+| External IdP | Локальный источник учётных записей по стране. |
+| Regional Medical DB | Локальное хранение personal / medical data. |
+| HttpOnly cookie | Browser session без доступа из JavaScript. |
+| Ownership check | Доступ только к своим отчётам и prosthesis_id. |
+endlegend
+
+@enduml
+EOF
